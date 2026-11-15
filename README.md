@@ -120,6 +120,7 @@ The mediaplayer entity supports:
 * Headphone treble (default disabled)
 * Speaker bass (default disabled)
 * Speaker treble (default disabled)
+* Individual speaker levels and subwoofer trim (network-connected receivers only)
 
 #### Select
 

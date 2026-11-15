@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import TYPE_CHECKING
 
+from defusedxml import ElementTree as ET  # noqa: N817
 from homeassistant.components.number import (
     NumberDeviceClass,
     NumberEntity,
@@ -13,12 +15,18 @@ from homeassistant.helpers.entity import EntityCategory
 
 import ynca
 
-from .const import ZONE_ATTRIBUTE_NAMES, ZONE_MAX_VOLUME, ZONE_MIN_VOLUME
+from .const import (
+    CONF_SERIAL_URL,
+    ZONE_ATTRIBUTE_NAMES,
+    ZONE_MAX_VOLUME,
+    ZONE_MIN_VOLUME,
+)
 from .entity import YamahaYncaSettingEntity
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from aiohttp import ClientSession
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -123,8 +131,160 @@ InitialVolumeValueEntityDescription = YncaNumberEntityDescription(
 )
 
 
+@dataclass(frozen=True, kw_only=True)
+class SpeakerLevelDescription(NumberEntityDescription):
+    xml_name: str
+
+
+SPEAKER_LEVEL_DESCRIPTIONS = [
+    SpeakerLevelDescription(
+        key="speaker_front_left",
+        translation_key="speaker_front_left",
+        xml_name="Front_L",
+        native_min_value=-10,
+        native_max_value=10,
+        native_step=0.5,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS,
+        icon="mdi:speaker",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    SpeakerLevelDescription(
+        key="speaker_front_right",
+        translation_key="speaker_front_right",
+        xml_name="Front_R",
+        native_min_value=-10,
+        native_max_value=10,
+        native_step=0.5,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS,
+        icon="mdi:speaker",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    SpeakerLevelDescription(
+        key="speaker_center",
+        translation_key="speaker_center",
+        xml_name="Center",
+        native_min_value=-10,
+        native_max_value=10,
+        native_step=0.5,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS,
+        icon="mdi:speaker",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    SpeakerLevelDescription(
+        key="speaker_surround_left",
+        translation_key="speaker_surround_left",
+        xml_name="Sur_L",
+        native_min_value=-10,
+        native_max_value=10,
+        native_step=0.5,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS,
+        icon="mdi:speaker",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    SpeakerLevelDescription(
+        key="speaker_surround_right",
+        translation_key="speaker_surround_right",
+        xml_name="Sur_R",
+        native_min_value=-10,
+        native_max_value=10,
+        native_step=0.5,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS,
+        icon="mdi:speaker",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    SpeakerLevelDescription(
+        key="speaker_surround_back_left",
+        translation_key="speaker_surround_back_left",
+        xml_name="Sur_Back_L",
+        native_min_value=-10,
+        native_max_value=10,
+        native_step=0.5,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS,
+        icon="mdi:speaker",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    SpeakerLevelDescription(
+        key="speaker_surround_back_right",
+        translation_key="speaker_surround_back_right",
+        xml_name="Sur_Back_R",
+        native_min_value=-10,
+        native_max_value=10,
+        native_step=0.5,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS,
+        icon="mdi:speaker",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    SpeakerLevelDescription(
+        key="speaker_subwoofer",
+        translation_key="speaker_subwoofer",
+        xml_name="Subwoofer_1",
+        native_min_value=-10,
+        native_max_value=10,
+        native_step=0.5,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS,
+        icon="mdi:subwoofer",
+        entity_category=EntityCategory.CONFIG,
+    ),
+]
+
+
+def receiver_http_url(serial_url: str) -> str | None:
+    """Return the receiver HTTP base URL for a network YNCA URL."""
+    if match := re.fullmatch(r"socket://([^:]+)(?::\d+)?", serial_url):
+        return f"http://{match[1]}"
+    return None
+
+
+def speaker_level_xml(value: float | None = None, xml_name: str | None = None) -> str:
+    """Build a speaker level GET or PUT request."""
+    if value is None or xml_name is None:
+        return "<System><Speaker_Preout><Pattern_1><Lvl>GetParam</Lvl></Pattern_1></Speaker_Preout></System>"
+    encoded_value = round(value * 10)
+    return (
+        "<System><Speaker_Preout><Pattern_1><Lvl>"
+        f"<{xml_name}><Val>{encoded_value}</Val><Exp>1</Exp><Unit>dB</Unit></{xml_name}>"
+        "</Lvl></Pattern_1></Speaker_Preout></System>"
+    )
+
+
+async def async_get_speaker_levels(
+    session: ClientSession, base_url: str
+) -> dict[str, float]:
+    """Read speaker levels from the receiver web API."""
+    async with session.post(
+        f"{base_url}/YamahaRemoteControl/ctrl",
+        data=f'<YAMAHA_AV cmd="GET">{speaker_level_xml()}</YAMAHA_AV>',
+        headers={"Content-Type": "text/xml"},
+    ) as response:
+        response.raise_for_status()
+        root = ET.fromstring(await response.text())
+    levels = root.find(".//Lvl")
+    if levels is None:
+        return {}
+    return {
+        child.tag: float(child.findtext("Val", "0")) / 10
+        for child in levels
+        if child.find("Val") is not None
+    }
+
+
+async def async_set_speaker_level(
+    session: ClientSession,
+    base_url: str,
+    description: SpeakerLevelDescription,
+    value: float,
+) -> None:
+    """Write a speaker level through the receiver web API."""
+    async with session.post(
+        f"{base_url}/YamahaRemoteControl/ctrl",
+        data=f'<YAMAHA_AV cmd="PUT">{speaker_level_xml(value, description.xml_name)}</YAMAHA_AV>',
+        headers={"Content-Type": "text/xml"},
+    ) as response:
+        response.raise_for_status()
+
+
 async def async_setup_entry(
-    _hass: HomeAssistant,
+    hass: HomeAssistant,
     config_entry: YamahaYncaConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
@@ -151,6 +311,27 @@ async def async_setup_entry(
                         InitialVolumeValueEntityDescription,
                     )
                 )
+
+    if (base_url := receiver_http_url(config_entry.data.get(CONF_SERIAL_URL, ""))) and (
+        main_zone := domain_entry_data.api.main
+    ):
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        levels = await async_get_speaker_levels(async_get_clientsession(hass), base_url)
+        entities.extend(
+            YamahaSpeakerLevel(
+                config_entry.entry_id,
+                main_zone,
+                description,
+                SpeakerLevelState(
+                    hass=hass,
+                    base_url=base_url,
+                    value=levels[description.xml_name],
+                ),
+            )
+            for description in SPEAKER_LEVEL_DESCRIPTIONS
+            if description.xml_name in levels
+        )
 
     async_add_entities(entities)
 
@@ -189,3 +370,42 @@ class YamahaYncaNumberInitialVolume(YamahaYncaNumber):
             and isinstance(self._associated_zone.initvollvl, float)
             and self._associated_zone.initvolmode is not ynca.InitVolMode.OFF
         )
+
+
+@dataclass
+class SpeakerLevelState:
+    hass: HomeAssistant
+    base_url: str
+    value: float
+
+
+class YamahaSpeakerLevel(YamahaYncaSettingEntity, NumberEntity):  # type: ignore[misc]
+    """Representation of a speaker level from the receiver web API."""
+
+    entity_description: SpeakerLevelDescription
+
+    def __init__(
+        self,
+        receiver_unique_id: str,
+        subunit: ynca.ZoneBase,
+        description: SpeakerLevelDescription,
+        state: SpeakerLevelState,
+    ) -> None:
+        super().__init__(receiver_unique_id, subunit, description)
+        self._speaker_level_state = state
+
+    @property
+    def native_value(self) -> float:
+        return self._speaker_level_state.value
+
+    async def async_set_native_value(self, value: float) -> None:
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        await async_set_speaker_level(
+            async_get_clientsession(self._speaker_level_state.hass),
+            self._speaker_level_state.base_url,
+            self.entity_description,
+            value,
+        )
+        self._speaker_level_state.value = value
+        self.async_write_ha_state()

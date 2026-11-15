@@ -111,6 +111,30 @@
       "sptreble": {
         "name": "Speaker treble"
       },
+      "speaker_front_left": {
+        "name": "Front left speaker level"
+      },
+      "speaker_front_right": {
+        "name": "Front right speaker level"
+      },
+      "speaker_center": {
+        "name": "Center speaker level"
+      },
+      "speaker_surround_left": {
+        "name": "Surround left speaker level"
+      },
+      "speaker_surround_right": {
+        "name": "Surround right speaker level"
+      },
+      "speaker_surround_back_left": {
+        "name": "Rear left speaker level"
+      },
+      "speaker_surround_back_right": {
+        "name": "Rear right speaker level"
+      },
+      "speaker_subwoofer": {
+        "name": "Subwoofer trim"
+      },
       "vol": {
         "name": "Volume (dB)"
       }

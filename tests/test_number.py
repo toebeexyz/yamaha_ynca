@@ -10,11 +10,16 @@ import pytest
 
 from custom_components import yamaha_ynca
 from custom_components.yamaha_ynca.number import (
+    SPEAKER_LEVEL_DESCRIPTIONS,
     InitialVolumeValueEntityDescription,
+    SpeakerLevelState,
+    YamahaSpeakerLevel,
     YamahaYncaNumber,
     YamahaYncaNumberInitialVolume,
     YncaNumberEntityDescription,
     async_setup_entry,
+    receiver_http_url,
+    speaker_level_xml,
 )
 from tests.conftest import setup_integration
 import ynca
@@ -198,3 +203,26 @@ async def test_initial_volume_number_entity(mock_zone: Mock) -> None:
     mock_zone.initvolmode = ynca.InitVolMode.ON
     mock_zone.initvollvl = ynca.InitVolLvl.MUTE
     assert not entity.available
+
+
+def test_speaker_level_helpers() -> None:
+    assert receiver_http_url("socket://192.168.1.194:50000") == "http://192.168.1.194"
+    assert receiver_http_url("SerialUrl") is None
+    assert "<Lvl>GetParam</Lvl>" in speaker_level_xml()
+    assert "<Val>-30</Val>" in speaker_level_xml(-3, "Front_L")
+
+
+@patch("custom_components.yamaha_ynca.number.async_set_speaker_level")
+async def test_speaker_level_entity(
+    async_set_speaker_level_mock: Mock, hass: HomeAssistant, mock_zone: Mock
+) -> None:
+    state = SpeakerLevelState(hass=hass, base_url="http://receiver", value=-3)
+    entity = YamahaSpeakerLevel(
+        "ReceiverUniqueId", mock_zone, SPEAKER_LEVEL_DESCRIPTIONS[0], state
+    )
+
+    assert entity.native_value == -3
+    await entity.async_set_native_value(-2.5)
+
+    assert state.value == -2.5
+    async_set_speaker_level_mock.assert_awaited_once()
